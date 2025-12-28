@@ -1,0 +1,9 @@
+apiVersion: bare-metal-controller.bare-metal.io/v1
+kind: Server
+metadata:
+  labels:
+    app.kubernetes.io/name: bare-metal-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: server-sample
+spec:
+  # TODO(user): Add fields here

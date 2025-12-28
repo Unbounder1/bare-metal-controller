@@ -1,0 +1,27 @@
+# permissions for end users to edit servers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: bare-metal-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: server-editor-role
+rules:
+- apiGroups:
+  - bare-metal-controller.bare-metal.io
+  resources:
+  - servers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - bare-metal-controller.bare-metal.io
+  resources:
+  - servers/status
+  verbs:
+  - get
