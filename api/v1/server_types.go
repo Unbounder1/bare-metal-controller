@@ -25,12 +25,18 @@ import (
 
 // ServerSpec defines the desired state of Server.
 type ServerSpec struct {
-	// Important: Run "make" to regenerate code after modifying this file
-
-	MACAddress string       `json:"macAddress,omitempty"`
+	// +kubebuilder:validation:Enum=on;off
+	PowerState PowerState   `json:"powerState"`
 	Type       ControlType  `json:"type,omitempty"`
 	Control    ControlSpecs `json:"control,omitempty"`
 }
+
+type PowerState string
+
+const (
+	PowerStateOn  PowerState = "on"
+	PowerStateOff PowerState = "off"
+)
 
 // +kubebuilder:validation:Enum=wol;ipmi
 type ControlType string
@@ -55,6 +61,9 @@ type IPMISpecs struct {
 type WOLSpecs struct {
 	// +kubebuilder:validation:Required
 	Address string `json:"address,omitempty"`
+	// +kubebuilder:validation:Required
+	MACAddress string `json:"macAddress,omitempty"`
+
 	// +kubebuilder:default=9
 	Port int    `json:"port,omitempty"`
 	User string `json:"user,omitempty"`
@@ -63,12 +72,21 @@ type WOLSpecs struct {
 // ServerStatus defines the observed state of Server.
 type ServerStatus struct {
 	Status CurrentStatus `json:"status,omitempty"`
+
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// +optional
+	FailingSince *metav1.Time `json:"failingSince,omitempty"`
+
+	// +optional
+	FailureCount int `json:"failureCount,omitempty"`
 }
 
 type CurrentStatus string
 
 const (
-	StatusBooting  CurrentStatus = "booting"
+	StatusPending  CurrentStatus = "pending"
 	StatusActive   CurrentStatus = "active"
 	StatusOffline  CurrentStatus = "offline"
 	StatusDraining CurrentStatus = "draining"
@@ -77,6 +95,7 @@ const (
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
 
 // Server is the Schema for the servers API.
 type Server struct {
