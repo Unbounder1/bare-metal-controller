@@ -69,6 +69,20 @@ func (r *ServerReconciler) powerOn(server *baremetalcontrollerv1.Server) error {
 	}
 }
 
+func (r *ServerReconciler) getServerAddress(server *baremetalcontrollerv1.Server) string {
+	switch server.Spec.Type {
+	case baremetalcontrollerv1.ControlTypeWOL:
+		if server.Spec.Control.WOL != nil {
+			return server.Spec.Control.WOL.Address
+		}
+	case baremetalcontrollerv1.ControlTypeIPMI:
+		if server.Spec.Control.IPMI != nil {
+			return server.Spec.Control.IPMI.Address
+		}
+	}
+	return ""
+}
+
 func (r *ServerReconciler) powerOff(server *baremetalcontrollerv1.Server) error {
 	switch server.Spec.Type {
 	case baremetalcontrollerv1.ControlTypeWOL:
@@ -129,84 +143,119 @@ func (r *ServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// Set to failed if failure count exceeds threshold
-	if server.Status.FailureCount >= 5 {
+	if server.Status.FailureCount >= 3 {
 		server.Status.Status = baremetalcontrollerv1.StatusFailed
 		r.Status().Update(ctx, &server)
 		return ctrl.Result{}, nil
 	}
 
-	// If pending, check reachability to update status
-	if server.Status.Status == baremetalcontrollerv1.StatusPending ||
-		server.Status.Status == baremetalcontrollerv1.StatusDraining {
-
-		reachable := r.Pinger.IsReachable(server.Spec.Control.WOL.Address)
-
-		var targetReached bool
-		var newStatus baremetalcontrollerv1.CurrentStatus
-
-		switch server.Status.Status {
-		case baremetalcontrollerv1.StatusPending:
-			targetReached = reachable
-			newStatus = baremetalcontrollerv1.StatusActive
-		case baremetalcontrollerv1.StatusDraining:
-			targetReached = !reachable
-			newStatus = baremetalcontrollerv1.StatusOffline
-		}
-
-		if targetReached {
-			server.Status.Status = newStatus
-			server.Status.FailingSince = nil
-			server.Status.FailureCount = 0
-			server.Status.Message = ""
-		} else {
-			if server.Status.FailingSince == nil {
-				now := metav1.Now()
-				server.Status.FailingSince = &now
-			}
-			server.Status.FailureCount++
-		}
-
+	// Check reachability
+	address := r.getServerAddress(&server)
+	if address == "" {
+		server.Status.Status = baremetalcontrollerv1.StatusFailed
+		server.Status.Message = "No address configured for server"
 		r.Status().Update(ctx, &server)
-		if targetReached {
+		return ctrl.Result{}, fmt.Errorf("no address configured for server %s", server.Name)
+	}
+	reachable := r.Pinger.IsReachable(address)
+
+	// Update status based on reachability
+	switch server.Status.Status {
+	case baremetalcontrollerv1.StatusPending:
+		// Waiting for server to come online
+		if reachable {
+			r.clearFailure(&server, baremetalcontrollerv1.StatusActive)
+		} else {
+			r.recordFailure(&server)
+		}
+		r.Status().Update(ctx, &server)
+		if reachable {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+
+	case baremetalcontrollerv1.StatusDraining:
+		// Waiting for server to go offline
+		if !reachable {
+			r.clearFailure(&server, baremetalcontrollerv1.StatusOffline)
+		} else {
+			r.recordFailure(&server)
+		}
+		r.Status().Update(ctx, &server)
+		if !reachable {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+
+	case baremetalcontrollerv1.StatusActive:
+		// Detect unexpected offline
+		if !reachable {
+			server.Status.Status = baremetalcontrollerv1.StatusOffline
+			r.Status().Update(ctx, &server)
+		}
+
+	case baremetalcontrollerv1.StatusOffline, "":
+		// Detect unexpected online, or initialize status
+		if reachable {
+			server.Status.Status = baremetalcontrollerv1.StatusActive
+		} else {
+			server.Status.Status = baremetalcontrollerv1.StatusOffline
+		}
+		r.Status().Update(ctx, &server)
 	}
 
-	// Check current state
+	// Determine current power state from status
 	currentState := baremetalcontrollerv1.PowerStateOff
-	if server.Status.Status == baremetalcontrollerv1.StatusActive || server.Status.Status == baremetalcontrollerv1.StatusPending {
+	if server.Status.Status == baremetalcontrollerv1.StatusActive {
 		currentState = baremetalcontrollerv1.PowerStateOn
 	}
 
-	// If desired state matches current state, do nothing
+	// If desired state matches current state, nothing to do
 	if server.Spec.PowerState == currentState {
 		return ctrl.Result{}, nil
 	}
 
 	// Perform power action
-	var senderStatus error
+	var err error
+	var newStatus baremetalcontrollerv1.CurrentStatus
 
 	switch server.Spec.PowerState {
 	case baremetalcontrollerv1.PowerStateOn:
-		senderStatus = r.powerOn(&server)
+		err = r.powerOn(&server)
+		newStatus = baremetalcontrollerv1.StatusPending
 	case baremetalcontrollerv1.PowerStateOff:
-		senderStatus = r.powerOff(&server)
+		err = r.powerOff(&server)
+		newStatus = baremetalcontrollerv1.StatusDraining
 	default:
 		return ctrl.Result{}, nil
 	}
 
-	if senderStatus != nil {
+	if err != nil {
 		server.Status.Status = baremetalcontrollerv1.StatusFailed
-		server.Status.Message = fmt.Sprintf("Power action failed: %v", senderStatus)
+		server.Status.Message = fmt.Sprintf("Power action failed: %v", err)
 		r.Status().Update(ctx, &server)
-		return ctrl.Result{}, senderStatus
+		return ctrl.Result{}, err
 	}
 
-	server.Status.Status = baremetalcontrollerv1.StatusPending
+	server.Status.Status = newStatus
 	server.Status.Message = ""
 	r.Status().Update(ctx, &server)
 	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+}
+
+func (r *ServerReconciler) clearFailure(server *baremetalcontrollerv1.Server, newStatus baremetalcontrollerv1.CurrentStatus) {
+	server.Status.Status = newStatus
+	server.Status.FailingSince = nil
+	server.Status.FailureCount = 0
+	server.Status.Message = ""
+}
+
+func (r *ServerReconciler) recordFailure(server *baremetalcontrollerv1.Server) {
+	if server.Status.FailingSince == nil {
+		now := metav1.Now()
+		server.Status.FailingSince = &now
+	}
+	server.Status.FailureCount++
 }
 
 // SetupWithManager sets up the controller with the Manager.

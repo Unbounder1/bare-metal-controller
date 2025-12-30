@@ -33,30 +33,6 @@ import (
 	"github.com/Unbounder1/bare-metal-controller/internal/power"
 )
 
-/*
-> Assuming controller can reach every server via LAN.
-> Assuming controller can passwordless authenticate to servers.
-Server Reconciliation workflow
- - Event triggers server reconcillation
-    - checks if this server exists as a resource
-        - no: error, exit
-    - checks if status matches declared
-	    - yes: nil, exit
-	- checks if status is pending state: provisioning, etc, have some time timeout for this
-	- check type
-		- Wol:
-			- Turning on the server -> send mac address packet
-			- Turning off the server -> ssh, send shutdown command
-		- ipmi:
-			- TBD
-	- Reconcile based on type definition
-	- Update status correctly (error if anything goes wrong, otherwise offline/online/provisioning)
-		- if turning on:
-			- check if it is reachable to confirm power on, then set status accordingly
-		- if turning of:
-			- sanity check ping to confirm power
-*/
-
 var _ = Describe("Server Controller", func() {
 
 	const (
@@ -160,6 +136,8 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should send WoL magic packet with correct parameters", func() {
+				mockPinger.Reachable = false // Server is off, not yet reachable
+
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: types.NamespacedName{Name: serverName},
 				})
@@ -171,7 +149,7 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should set status to booting after sending WoL packet", func() {
-				mockPinger.Reachable = false
+				mockPinger.Reachable = false // Server is off, not yet reachable
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: types.NamespacedName{Name: serverName},
@@ -185,7 +163,7 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should set status to active when server becomes reachable", func() {
-				mockPinger.Reachable = true
+				mockPinger.Reachable = true // Server has booted and is now reachable
 
 				for i := 0; i < 5; i++ {
 					_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -200,6 +178,7 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should set status to failed when WoL packet fails to send", func() {
+				mockPinger.Reachable = false // Server is off
 				mockWol.ReturnError = errors.NewServiceUnavailable("network error")
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -227,6 +206,8 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should send SSH shutdown command", func() {
+				mockPinger.Reachable = true // Server is active and reachable
+
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: types.NamespacedName{Name: serverName},
 				})
@@ -252,13 +233,15 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should set status to offline when server is unreachable", func() {
-				mockPinger.Reachable = false
+				mockPinger.Reachable = false // Server has shut down
 
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: types.NamespacedName{Name: serverName},
-				})
+				for i := 0; i < 5; i++ {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: types.NamespacedName{Name: serverName},
+					})
 
-				Expect(err).NotTo(HaveOccurred())
+					Expect(err).NotTo(HaveOccurred())
+				}
 
 				var server baremetalcontrollerv1.Server
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: serverName}, &server)).To(Succeed())
@@ -266,6 +249,7 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should set status to failed when SSH command fails", func() {
+				mockPinger.Reachable = true // Server is active
 				mockSSH.ReturnError = errors.NewServiceUnavailable("connection refused")
 
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -282,6 +266,8 @@ var _ = Describe("Server Controller", func() {
 
 		Context("when status already matches desired state", func() {
 			It("should not send any commands when already active and desired is on", func() {
+				mockPinger.Reachable = true // Server is active and reachable
+
 				server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOn)
 				Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
@@ -300,6 +286,8 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should not send any commands when already offline and desired is off", func() {
+				mockPinger.Reachable = false // Server is offline and unreachable
+
 				server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOff)
 				Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
@@ -340,6 +328,8 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should send IPMI power on command", func() {
+				mockPinger.Reachable = false // Server is off, not yet reachable
+
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: types.NamespacedName{Name: serverName},
 				})
@@ -350,13 +340,14 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should set status to active when server is reachable", func() {
-				mockPinger.Reachable = true
+				mockPinger.Reachable = true // Server has booted and is reachable
 
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: types.NamespacedName{Name: serverName},
-				})
-
-				Expect(err).NotTo(HaveOccurred())
+				for i := 0; i < 2; i++ {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: types.NamespacedName{Name: serverName},
+					})
+					Expect(err).NotTo(HaveOccurred())
+				}
 
 				var server baremetalcontrollerv1.Server
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: serverName}, &server)).To(Succeed())
@@ -376,6 +367,8 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should send IPMI power off command", func() {
+				mockPinger.Reachable = true // Server is active and reachable
+
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: types.NamespacedName{Name: serverName},
 				})
@@ -385,14 +378,15 @@ var _ = Describe("Server Controller", func() {
 			})
 
 			It("should set status to offline when server is unreachable", func() {
-				mockPinger.Reachable = false
+				mockPinger.Reachable = false // Server has shut down
 
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: types.NamespacedName{Name: serverName},
-				})
+				for i := 0; i < 5; i++ {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: types.NamespacedName{Name: serverName},
+					})
 
-				Expect(err).NotTo(HaveOccurred())
-
+					Expect(err).NotTo(HaveOccurred())
+				}
 				var server baremetalcontrollerv1.Server
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: serverName}, &server)).To(Succeed())
 				Expect(server.Status.Status).To(Equal(baremetalcontrollerv1.StatusOffline))
@@ -416,7 +410,7 @@ var _ = Describe("Server Controller", func() {
 			created.Status.Status = baremetalcontrollerv1.StatusPending
 			Expect(k8sClient.Status().Update(ctx, &created)).To(Succeed())
 
-			mockPinger.Reachable = false
+			mockPinger.Reachable = false // Not yet reachable, should requeue
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: serverName},
@@ -435,7 +429,7 @@ var _ = Describe("Server Controller", func() {
 			created.Status.Status = baremetalcontrollerv1.StatusDraining
 			Expect(k8sClient.Status().Update(ctx, &created)).To(Succeed())
 
-			mockPinger.Reachable = true
+			mockPinger.Reachable = true // Still reachable, should requeue
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: serverName},
@@ -454,7 +448,7 @@ var _ = Describe("Server Controller", func() {
 			created.Status.Status = baremetalcontrollerv1.StatusPending
 			Expect(k8sClient.Status().Update(ctx, &created)).To(Succeed())
 
-			mockPinger.Reachable = true
+			mockPinger.Reachable = true // Server has booted
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: serverName},
@@ -476,7 +470,7 @@ var _ = Describe("Server Controller", func() {
 			created.Status.Status = baremetalcontrollerv1.StatusDraining
 			Expect(k8sClient.Status().Update(ctx, &created)).To(Succeed())
 
-			mockPinger.Reachable = false
+			mockPinger.Reachable = false // Server has shut down
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: serverName},
@@ -519,6 +513,8 @@ var _ = Describe("Server Controller", func() {
 		})
 
 		It("should fail when type is WoL but WoL specs are nil", func() {
+			mockPinger.Reachable = false // Doesn't matter, should fail before ping
+
 			server := &baremetalcontrollerv1.Server{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: serverName,
