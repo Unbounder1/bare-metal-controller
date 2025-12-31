@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	baremetalcontrollerv1 "github.com/Unbounder1/bare-metal-controller/api/v1"
@@ -36,8 +37,9 @@ import (
 var _ = Describe("Server Controller", func() {
 
 	const (
-		timeout  = time.Second * 10
-		interval = time.Millisecond * 250
+		timeout       = time.Second * 10
+		interval      = time.Millisecond * 250
+		testNamespace = "default"
 	)
 
 	var (
@@ -78,6 +80,10 @@ var _ = Describe("Server Controller", func() {
 						MACAddress: "00:11:22:33:44:55",
 						Port:       9,
 						User:       "admin",
+						SSHSecretRef: &baremetalcontrollerv1.SecretReference{
+							Name:      "ssh-secret-" + name,
+							Namespace: testNamespace,
+						},
 					},
 				},
 			},
@@ -104,6 +110,34 @@ var _ = Describe("Server Controller", func() {
 		}
 	}
 
+	// Helper to create an SSH secret
+	createSSHSecret := func(name string, namespace string) *corev1.Secret {
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{
+				"username":       []byte("admin"),
+				"ssh-privatekey": []byte("test-private-key"),
+				"password":       []byte("test-password"),
+			},
+		}
+	}
+
+	// Helper to clean up secret
+	deleteSecret := func(name string, namespace string) {
+		secret := &corev1.Secret{}
+		err := k8sClient.Get(ctx, types.NamespacedName{
+			Name:      name,
+			Namespace: namespace,
+		}, secret)
+		if err == nil {
+			Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+		}
+	}
+
 	// Helper to clean up a server resource
 	deleteServer := func(name string) {
 		server := &baremetalcontrollerv1.Server{}
@@ -124,13 +158,18 @@ var _ = Describe("Server Controller", func() {
 
 	Context("When reconciling a WoL server", func() {
 		const serverName = "wol-test-server"
+		secretName := "ssh-secret-" + serverName
 
 		AfterEach(func() {
 			deleteServer(serverName)
+			deleteSecret(secretName, testNamespace)
 		})
 
 		Context("when turning on the server", func() {
 			BeforeEach(func() {
+				secret := createSSHSecret(secretName, testNamespace)
+				Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
 				server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOn)
 				Expect(k8sClient.Create(ctx, server)).To(Succeed())
 			})
@@ -195,6 +234,9 @@ var _ = Describe("Server Controller", func() {
 
 		Context("when turning off the server", func() {
 			BeforeEach(func() {
+				secret := createSSHSecret(secretName, testNamespace)
+				Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
 				server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOff)
 				Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
@@ -268,6 +310,9 @@ var _ = Describe("Server Controller", func() {
 			It("should not send any commands when already active and desired is on", func() {
 				mockPinger.Reachable = true // Server is active and reachable
 
+				secret := createSSHSecret(secretName, testNamespace)
+				Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
 				server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOn)
 				Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
@@ -287,6 +332,9 @@ var _ = Describe("Server Controller", func() {
 
 			It("should not send any commands when already offline and desired is off", func() {
 				mockPinger.Reachable = false // Server is offline and unreachable
+
+				secret := createSSHSecret(secretName, testNamespace)
+				Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 				server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOff)
 				Expect(k8sClient.Create(ctx, server)).To(Succeed())
@@ -396,12 +444,17 @@ var _ = Describe("Server Controller", func() {
 
 	Context("When handling pending states", func() {
 		const serverName = "pending-test-server"
+		secretName := "ssh-secret-" + serverName
 
 		AfterEach(func() {
 			deleteServer(serverName)
+			deleteSecret(secretName, testNamespace)
 		})
 
 		It("should requeue when status is booting", func() {
+			secret := createSSHSecret(secretName, testNamespace)
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
 			server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOn)
 			Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
@@ -421,6 +474,9 @@ var _ = Describe("Server Controller", func() {
 		})
 
 		It("should requeue when status is draining", func() {
+			secret := createSSHSecret(secretName, testNamespace)
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
 			server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOff)
 			Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
@@ -440,6 +496,9 @@ var _ = Describe("Server Controller", func() {
 		})
 
 		It("should transition from booting to active when reachable", func() {
+			secret := createSSHSecret(secretName, testNamespace)
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
 			server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOn)
 			Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
@@ -462,6 +521,9 @@ var _ = Describe("Server Controller", func() {
 		})
 
 		It("should transition from draining to offline when unreachable", func() {
+			secret := createSSHSecret(secretName, testNamespace)
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
 			server := createWolServer(serverName, baremetalcontrollerv1.PowerStateOff)
 			Expect(k8sClient.Create(ctx, server)).To(Succeed())
 

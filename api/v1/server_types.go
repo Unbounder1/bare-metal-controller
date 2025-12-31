@@ -63,10 +63,25 @@ type WOLSpecs struct {
 	Address string `json:"address,omitempty"`
 	// +kubebuilder:validation:Required
 	MACAddress string `json:"macAddress,omitempty"`
+	// +optional
+	BroadcastAddress string `json:"broadcastAddress,omitempty"`
 
 	// +kubebuilder:default=9
-	Port int    `json:"port,omitempty"`
-	User string `json:"user,omitempty"`
+	Port         int              `json:"port,omitempty"`
+	User         string           `json:"user,omitempty"`
+	SSHSecretRef *SecretReference `json:"sshSecretRef,omitempty"`
+}
+
+// SecretReference points to a Kubernetes Secret
+type SecretReference struct {
+	// Name of the Secret
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Namespace of the Secret (defaults to Server's namespace, but since
+	// Server is cluster-scoped, this should be required)
+	// +kubebuilder:validation:Required
+	Namespace string `json:"namespace"`
 }
 
 // ServerStatus defines the observed state of Server.

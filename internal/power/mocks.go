@@ -10,10 +10,11 @@ type MockWolSender struct {
 	ReturnError   error
 }
 
-func (m *MockWolSender) Wake(macAddress string, port int) error {
+func (m *MockWolSender) Wake(macAddress string, port int, broadcastIP string) error {
 	m.WakeCalled = true
 	m.WakeCallCount++
 	m.LastMAC = macAddress
+	m.LastIP = broadcastIP
 	m.LastPort = port
 	return m.ReturnError
 }
@@ -27,7 +28,7 @@ type MockSSHClient struct {
 	ReturnError       error
 }
 
-func (m *MockSSHClient) Shutdown(host string, user string) error {
+func (m *MockSSHClient) Shutdown(host string, user string, key string) error {
 	m.ShutdownCalled = true
 	m.ShutdownCallCount++
 	m.LastHost = host

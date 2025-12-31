@@ -56,11 +56,28 @@ spec:
                     properties:
                       address:
                         type: string
+                      broadcastAddress:
+                        type: string
                       macAddress:
                         type: string
                       port:
                         default: 9
                         type: integer
+                      sshSecretRef:
+                        description: SecretReference points to a Kubernetes Secret
+                        properties:
+                          name:
+                            description: Name of the Secret
+                            type: string
+                          namespace:
+                            description: |-
+                              Namespace of the Secret (defaults to Server's namespace, but since
+                              Server is cluster-scoped, this should be required)
+                            type: string
+                        required:
+                        - name
+                        - namespace
+                        type: object
                       user:
                         type: string
                     required:

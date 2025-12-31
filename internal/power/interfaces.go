@@ -2,12 +2,12 @@ package power
 
 // WolSender sends Wake-on-LAN magic packets
 type WolSender interface {
-	Wake(macAddress string, port int) error
+	Wake(macAddress string, port int, broadcastAddress string) error
 }
 
 // SSHClient executes commands over SSH
 type SSHClient interface {
-	Shutdown(host string, user string) error
+	Shutdown(host string, user string, key string) error
 }
 
 // IPMIClient controls servers via IPMI

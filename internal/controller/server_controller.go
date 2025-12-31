@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -41,7 +43,7 @@ type ServerReconciler struct {
 	Pinger     power.Pinger
 }
 
-func (r *ServerReconciler) powerOn(server *baremetalcontrollerv1.Server) error {
+func (r *ServerReconciler) powerOn(ctx context.Context, server *baremetalcontrollerv1.Server) error {
 	switch server.Spec.Type {
 	case baremetalcontrollerv1.ControlTypeWOL:
 		if server.Spec.Control.WOL == nil {
@@ -50,7 +52,8 @@ func (r *ServerReconciler) powerOn(server *baremetalcontrollerv1.Server) error {
 		if server.Spec.Control.WOL.MACAddress == "" {
 			return fmt.Errorf("WOL MAC address is required")
 		}
-		return r.WolSender.Wake(server.Spec.Control.WOL.MACAddress, server.Spec.Control.WOL.Port)
+
+		return r.WolSender.Wake(server.Spec.Control.WOL.MACAddress, server.Spec.Control.WOL.Port, server.Spec.Control.WOL.BroadcastAddress)
 
 	case baremetalcontrollerv1.ControlTypeIPMI:
 		if server.Spec.Control.IPMI == nil {
@@ -83,7 +86,8 @@ func (r *ServerReconciler) getServerAddress(server *baremetalcontrollerv1.Server
 	return ""
 }
 
-func (r *ServerReconciler) powerOff(server *baremetalcontrollerv1.Server) error {
+// powerOff powers off the server based on its control type
+func (r *ServerReconciler) powerOff(ctx context.Context, server *baremetalcontrollerv1.Server) error {
 	switch server.Spec.Type {
 	case baremetalcontrollerv1.ControlTypeWOL:
 		if server.Spec.Control.WOL == nil {
@@ -92,7 +96,33 @@ func (r *ServerReconciler) powerOff(server *baremetalcontrollerv1.Server) error 
 		if server.Spec.Control.WOL.Address == "" {
 			return fmt.Errorf("WOL address is required")
 		}
-		return r.SSHClient.Shutdown(server.Spec.Control.WOL.Address, server.Spec.Control.WOL.User)
+		if server.Spec.Control.WOL.User == "" {
+			return fmt.Errorf("WOL user is required")
+		}
+		if server.Spec.Control.WOL.SSHSecretRef == nil {
+			return fmt.Errorf("SSH secret reference is required")
+		}
+
+		// Getting key from secret
+		secret := &corev1.Secret{}
+		secret.Name = server.Spec.Control.WOL.SSHSecretRef.Name
+		secret.Namespace = server.Spec.Control.WOL.SSHSecretRef.Namespace
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      server.Spec.Control.WOL.SSHSecretRef.Name,
+			Namespace: server.Spec.Control.WOL.SSHSecretRef.Namespace,
+		}, secret)
+
+		if err != nil {
+			return fmt.Errorf("failed to get SSH secret: %v", err)
+		}
+		keyBytes, ok := secret.Data["ssh-privatekey"]
+		if !ok {
+			return fmt.Errorf("ssh-privatekey not found in secret %s/%s", secret.Namespace, secret.Name)
+		}
+		key := string(keyBytes)
+
+		// Shutdown via SSH
+		return r.SSHClient.Shutdown(server.Spec.Control.WOL.Address, server.Spec.Control.WOL.User, key)
 
 	case baremetalcontrollerv1.ControlTypeIPMI:
 		if server.Spec.Control.IPMI == nil {
@@ -221,10 +251,10 @@ func (r *ServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	switch server.Spec.PowerState {
 	case baremetalcontrollerv1.PowerStateOn:
-		err = r.powerOn(&server)
+		err = r.powerOn(ctx, &server)
 		newStatus = baremetalcontrollerv1.StatusPending
 	case baremetalcontrollerv1.PowerStateOff:
-		err = r.powerOff(&server)
+		err = r.powerOff(ctx, &server)
 		newStatus = baremetalcontrollerv1.StatusDraining
 	default:
 		return ctrl.Result{}, nil
