@@ -292,7 +292,7 @@ func (s *BareMetalProviderServer) getMaxSize(ctx context.Context) int32 {
 }
 
 // mapPowerStateToInstanceState converts a server power state to an instance state.
-func (s *BareMetalProviderServer) mapPowerStateToInstanceState(powerState baremetalcontrollerv1.PowerState) InstanceState {
+func (s *BareMetalProviderServer) mapPowerStateToInstanceState(powerState baremetalcontrollerv1.PowerState) InstanceStatus_InstanceState {
 	switch powerState {
 	case baremetalcontrollerv1.PowerStateOn:
 		return InstanceStatus_instanceRunning
