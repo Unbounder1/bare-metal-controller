@@ -88,6 +88,9 @@ func (r *ServerReconciler) getServerAddress(server *baremetalcontrollerv1.Server
 
 // powerOff powers off the server based on its control type
 func (r *ServerReconciler) powerOff(ctx context.Context, server *baremetalcontrollerv1.Server) error {
+	// TODO: Implement pod draining before shutdown
+
+	// Shutdown server based on specified control type
 	switch server.Spec.Type {
 	case baremetalcontrollerv1.ControlTypeWOL:
 		if server.Spec.Control.WOL == nil {
