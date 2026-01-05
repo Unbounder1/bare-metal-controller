@@ -1,4 +1,4 @@
-package protos
+package external
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/Unbounder1/bare-metal-controller/external/protos"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -110,10 +111,10 @@ func (s *Server) Start(ctx context.Context) error {
 	s.grpcServer = grpcServer
 
 	// Register the bare metal provider
-	bareMetalProvider := &BareMetalProviderServer{
+	bareMetalProvider := &protos.BareMetalProviderServer{
 		Client: s.client,
 	}
-	RegisterCloudProviderServer(s.grpcServer, bareMetalProvider)
+	protos.RegisterCloudProviderServer(s.grpcServer, bareMetalProvider)
 
 	// Create listener
 	listener, err := net.Listen("tcp", s.options.Address)
