@@ -61,6 +61,7 @@ func main() {
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
 
+	// Use default grpc options
 	grpcOpts := grpcserver.DefaultOptions()
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
