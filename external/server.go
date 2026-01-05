@@ -13,8 +13,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-
-	"github.com/Unbounder1/bare-metal-controller/protos"
 )
 
 // Options contains configuration for the gRPC server.
@@ -112,10 +110,10 @@ func (s *Server) Start(ctx context.Context) error {
 	s.grpcServer = grpcServer
 
 	// Register the bare metal provider
-	bareMetalProvider := &protos.BareMetalProviderServer{
+	bareMetalProvider := &BareMetalProviderServer{
 		Client: s.client,
 	}
-	protos.RegisterCloudProviderServer(s.grpcServer, bareMetalProvider)
+	RegisterCloudProviderServer(s.grpcServer, bareMetalProvider)
 
 	// Create listener
 	listener, err := net.Listen("tcp", s.options.Address)
