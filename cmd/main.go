@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	baremetalcontrollerv1 "github.com/Unbounder1/bare-metal-controller/api/v1"
+	grpcserver "github.com/Unbounder1/bare-metal-controller/external"
 	"github.com/Unbounder1/bare-metal-controller/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -59,6 +60,9 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+
+	grpcOpts := grpcserver.DefaultOptions()
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -150,6 +154,21 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	grpcServer, err := grpcserver.NewServer(grpcOpts, mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to create gRPC server")
+		os.Exit(1)
+	}
+
+	if err := mgr.Add(grpcServer); err != nil {
+		setupLog.Error(err, "unable to add gRPC server to manager")
+		os.Exit(1)
+	}
+
+	setupLog.Info("gRPC cloud provider server configured",
+		"address", grpcOpts.Address,
+		"tls", grpcOpts.IsTLSEnabled())
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
