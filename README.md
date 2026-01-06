@@ -405,6 +405,8 @@ make docker-push IMG=<registry>/bare-metal-controller:dev
 
 ## Roadmap
 
+- [ ] Autoscaler option integration
+- [ ] Use mTLS for gRPC connection
 - [ ] Multiple node groups with label selectors
 - [ ] Health checks for server status verification
 - [ ] Metrics collection from servers
